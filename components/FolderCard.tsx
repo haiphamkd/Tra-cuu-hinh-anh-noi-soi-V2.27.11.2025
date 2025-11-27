@@ -67,13 +67,19 @@ export const FolderCard: React.FC<Props> = ({ item, onNavigate, onPreview, folde
         className="flex-1 flex flex-col h-full"
       >
         {/* Thumbnail or Icon Area */}
-        <div className={`relative ${isImage && !imgError ? 'aspect-[4/3]' : 'p-3 flex-shrink-0'}`}>
+        <div 
+            className={`relative ${isImage && !imgError ? 'aspect-[4/3]' : 'p-3 flex-shrink-0'}`}
+            // Inline style fallback to prevent giant images if Tailwind fails
+            style={isImage && !imgError ? { aspectRatio: '4/3', width: '100%', overflow: 'hidden' } : {}}
+        >
             {isImage && !imgError && thumbnailUrl ? (
                 <div className="w-full h-full bg-gray-100 relative overflow-hidden">
                     <img 
                         src={thumbnailUrl} 
                         alt={item.name} 
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        // Inline fallback
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         onError={() => setImgError(true)}
                         loading="lazy"
                     />
@@ -102,13 +108,13 @@ export const FolderCard: React.FC<Props> = ({ item, onNavigate, onPreview, folde
         <div className="p-3 flex-1 flex flex-col">
             {/* Header: Title + Badge */}
             <div className="flex justify-between items-start gap-2 mb-1">
-                <h3 className="font-bold text-gray-800 line-clamp-2 text-sm leading-snug group-hover:text-blue-700 transition-colors pt-0.5" title={item.name}>
+                <h3 className="font-bold text-gray-800 line-clamp-2 text-sm leading-snug group-hover:text-blue-700 transition-colors pt-0.5 break-words" title={item.name}>
                     {item.name}
                 </h3>
                 
                 {/* Blue/White Count Badge (Tag Style) */}
                 {isFolder && folderCount !== undefined && folderCount > 0 && (
-                     <span className="flex-shrink-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow-sm transform group-hover:scale-105 transition-transform" title={`${folderCount} thư mục con`}>
+                     <span className="flex-shrink-0 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow-sm transform group-hover:scale-105 transition-transform leading-tight" title={`${folderCount} thư mục con`}>
                          {folderCount}
                      </span>
                 )}
@@ -152,7 +158,7 @@ export const FolderCard: React.FC<Props> = ({ item, onNavigate, onPreview, folde
                 type="text" 
                 readOnly 
                 value={item.url} 
-                className="flex-1 bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 p-0 w-full truncate font-mono select-all group-hover:text-blue-600"
+                className="flex-1 bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 p-0 w-full truncate font-mono select-all group-hover:text-blue-600 outline-none"
                 onClick={(e) => e.currentTarget.select()}
              />
              <button 

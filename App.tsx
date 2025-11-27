@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { SearchIcon, PlusIcon, FolderIcon } from './components/Icons';
+import { SearchIcon, FolderIcon } from './components/Icons';
 import { FolderCard } from './components/FolderCard';
 import { SmartImportModal } from './components/SmartImportModal';
 import { ConnectModal } from './components/ConnectModal';
@@ -33,6 +33,13 @@ const App: React.FC = () => {
   const [folderCache, setFolderCache] = useState<Record<string, DirectoryItem[]>>({});
   // Cache for folder sub-item counts: { folderId: count }
   const [statsCache, setStatsCache] = useState<Record<string, number>>({});
+  // Ref to access latest cache inside effect without triggering re-runs
+  const statsCacheRef = useRef<Record<string, number>>({});
+
+  // Sync state to ref
+  useEffect(() => {
+    statsCacheRef.current = statsCache;
+  }, [statsCache]);
   
   // Changed: Initialize with DEFAULT_API_KEY
   const [apiKey, setApiKey] = useState<string>(() => {
@@ -236,8 +243,9 @@ const App: React.FC = () => {
 
     // Identify folders that are visible but don't have stats yet
     // REMOVED .slice(0, 50) to allow full list processing
+    // Use Ref to check cache to avoid effect re-triggering when state updates
     const visibleFolders = filteredItems
-        .filter(item => item.type === ItemType.FOLDER && statsCache[item.id] === undefined);
+        .filter(item => item.type === ItemType.FOLDER && statsCacheRef.current[item.id] === undefined);
 
     if (visibleFolders.length === 0) return;
 
@@ -245,7 +253,7 @@ const App: React.FC = () => {
 
     // BATCH PROCESSING
     const processBatches = async () => {
-        const BATCH_SIZE = 20; // Increased to 20 for faster processing
+        const BATCH_SIZE = 20; 
         
         for (let i = 0; i < visibleFolders.length; i += BATCH_SIZE) {
             if (!isMounted) break;
