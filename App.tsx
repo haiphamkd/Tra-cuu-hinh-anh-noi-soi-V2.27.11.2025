@@ -1,0 +1,640 @@
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { SearchIcon, PlusIcon, FolderIcon } from './components/Icons';
+import { FolderCard } from './components/FolderCard';
+import { SmartImportModal } from './components/SmartImportModal';
+import { ConnectModal } from './components/ConnectModal';
+import { Breadcrumbs } from './components/Breadcrumbs';
+import { FilePreviewModal } from './components/FilePreviewModal';
+import { fetchDriveData, fetchFolderCount } from './services/apiService';
+import { DirectoryItem, ApiResponse, ItemType } from './types';
+
+// Updated link as requested
+const SHARED_DRIVE_LINK = "https://drive.google.com/drive/folders/1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk?usp=drive_link";
+const ROOT_ID = "1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk";
+// Hardcoded API Key for internal use
+const DEFAULT_API_KEY = "AIzaSyBITtcZhbe4lu7HL1uroOSpe5SJpQytsmw";
+
+interface HistoryItem {
+  id: string;
+  name: string;
+}
+
+type TimeRange = '7' | '30' | '90' | '180' | '365' | 'all';
+// Removed SearchScope as we are doing client-side search only
+type LimitOption = 100 | 500 | 1000 | 3000 | 5000 | 'all';
+
+const App: React.FC = () => {
+  // State Management
+  const [items, setItems] = useState<DirectoryItem[]>([]);
+  // Ref to track items without triggering re-renders in callbacks
+  const itemsRef = useRef<DirectoryItem[]>([]);
+  
+  const [folderCache, setFolderCache] = useState<Record<string, DirectoryItem[]>>({});
+  // Cache for folder sub-item counts: { folderId: count }
+  const [statsCache, setStatsCache] = useState<Record<string, number>>({});
+  
+  // Changed: Initialize with DEFAULT_API_KEY
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return localStorage.getItem('drive-api-key-v1') || DEFAULT_API_KEY;
+  });
+  
+  // Navigation State
+  const [history, setHistory] = useState<HistoryItem[]>([{ id: ROOT_ID, name: 'Kho Hồ Sơ Tổng' }]);
+  const currentFolderId = history[history.length - 1]?.id;
+
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Helper to calculate date string
+  const calculateDate = (range: TimeRange): string => {
+      if (range === 'all') return 'all';
+      const d = new Date();
+      d.setDate(d.getDate() - Number(range));
+      return d.toISOString();
+  };
+
+  const [timeRange, setTimeRange] = useState<TimeRange>('30'); 
+  // Stable filter date state to ensure pageToken remains valid during pagination
+  const [filterDate, setFilterDate] = useState<string>(() => calculateDate('30'));
+
+  // Default Limit set to 3000 as requested
+  const [limit, setLimit] = useState<LimitOption>(3000); 
+  
+  // Pagination State
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<DirectoryItem | null>(null);
+  
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Refs for race condition handling
+  const latestRequestRef = useRef<number>(0);
+
+  // Save API Key
+  useEffect(() => {
+    if(apiKey) localStorage.setItem('drive-api-key-v1', apiKey);
+  }, [apiKey]);
+
+  // Sync items state to ref
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  // Main Data Loading Logic
+  const refreshData = useCallback(async (
+      key: string, 
+      folderId: string, 
+      dateFilter: string, 
+      itemLimit: LimitOption,
+      token?: string
+    ) => {
+      if (!key) {
+          if (!isConnectModalOpen) setError("Vui lòng nhập API Key để bắt đầu.");
+          return;
+      }
+
+      const isInitialLoad = !token;
+      
+      if (isInitialLoad) {
+        setIsLoading(true);
+        setItems([]); 
+      } else {
+        setIsFetchingMore(true);
+      }
+      
+      if (isInitialLoad) setError(null);
+      
+      const requestId = Date.now();
+      latestRequestRef.current = requestId;
+
+      try {
+          // Note: Passing undefined for query and 'current' scope effectively disables server-side search
+          // We rely on 'browsing' mode logic in apiService
+          let data: ApiResponse = await fetchDriveData(
+              key, folderId, undefined, dateFilter, 'current', itemLimit, token
+          );
+
+          // AUTO-RETRY LOGIC:
+          // If we are looking at a specific folder (not root), and it returns 0 items,
+          // and we have a date filter active, retry immediately with 'all' time.
+          if (
+              isInitialLoad && 
+              data.items.length === 0 && 
+              dateFilter !== 'all' 
+              // Removed root check to allow auto-expand on root too
+            ) {
+              console.log("Folder empty with filter. Retrying with ALL time...");
+              const retryData = await fetchDriveData(
+                  key, folderId, undefined, 'all', 'current', itemLimit, undefined
+              );
+              
+              if (retryData.items.length > 0) {
+                  data = retryData;
+                  // Automatically update UI controls to reflect reality
+                  setTimeRange('all');
+                  setFilterDate('all');
+              }
+          }
+          
+          if (latestRequestRef.current !== requestId) return;
+
+          setItems(prev => {
+              const combined = isInitialLoad ? data.items : [...prev, ...data.items];
+              return combined;
+          });
+
+          // Pagination logic with limit check
+          if (data.nextPageToken) {
+               // USE REF for current count to avoid stale closures or dependency loops
+               const currentCount = isInitialLoad ? data.items.length : (itemsRef.current.length + data.items.length);
+               const maxLimit = itemLimit === 'all' ? 999999 : Number(itemLimit);
+               
+               if (currentCount < maxLimit) {
+                   setNextPageToken(data.nextPageToken);
+               } else {
+                   setNextPageToken(null);
+               }
+          } else {
+              setNextPageToken(null);
+          }
+
+      } catch (e: any) {
+          if (latestRequestRef.current === requestId) {
+              const msg = e.message;
+              
+              // Auto-recovery for bad tokens
+              if (msg && msg.includes("Token") && token) {
+                  console.warn("Invalid token detected, resetting pagination.");
+                  setNextPageToken(null);
+              } else if (isInitialLoad) {
+                  setError(msg || "Không thể tải dữ liệu.");
+              } else {
+                  console.warn("Pagination stopped:", msg);
+                  setNextPageToken(null);
+              }
+          }
+      } finally {
+          if (latestRequestRef.current === requestId) {
+              setIsLoading(false);
+              setIsFetchingMore(false);
+          }
+      }
+  }, [isConnectModalOpen]); // Removed items.length dependency
+
+  // Trigger subsequent fetches if token exists
+  useEffect(() => {
+      // STOP Pagination if we reached the user-requested limit
+      // Use Ref to check limit without adding 'items' to dependency array
+      if (typeof limit === 'number' && itemsRef.current.length >= limit) {
+          return;
+      }
+
+      if (nextPageToken && !isLoading && !isFetchingMore && !error) {
+          const timer = setTimeout(() => {
+               refreshData(apiKey, currentFolderId, filterDate, limit, nextPageToken);
+          }, 100);
+          return () => clearTimeout(timer);
+      }
+  }, [nextPageToken, isLoading, isFetchingMore, error, apiKey, currentFolderId, filterDate, limit, refreshData]); // Removed items.length
+
+
+  // --- MAIN CACHE & FETCH LOGIC ---
+  useEffect(() => {
+      // Skip if no key
+      if (!apiKey) return;
+
+      refreshData(apiKey, currentFolderId, filterDate, limit);
+      // Reset stats cache when navigating to a new folder
+      // But we can keep it if we want persistent cache, let's keep it for now.
+      
+  }, [currentFolderId, apiKey, filterDate, limit, refreshData]); 
+
+
+  // --- LAZY LOAD FOLDER COUNTS (PARALLEL BATCHING) ---
+  const filteredItems = useMemo(() => {
+    let result = items;
+    
+    // Client-side filtering
+    if (searchQuery) {
+        const lowerQuery = searchQuery.toLowerCase();
+        result = result.filter(item => item.name.toLowerCase().includes(lowerQuery));
+    }
+
+    if (activeTag) {
+        result = result.filter(item => item.tags && item.tags.includes(activeTag));
+    }
+    return result;
+  }, [items, activeTag, searchQuery]);
+
+  useEffect(() => {
+    if (!apiKey) return;
+
+    // Identify folders that are visible but don't have stats yet
+    // REMOVED .slice(0, 50) to allow full list processing
+    const visibleFolders = filteredItems
+        .filter(item => item.type === ItemType.FOLDER && statsCache[item.id] === undefined);
+
+    if (visibleFolders.length === 0) return;
+
+    let isMounted = true;
+
+    // BATCH PROCESSING
+    const processBatches = async () => {
+        const BATCH_SIZE = 20; // Increased to 20 for faster processing
+        
+        for (let i = 0; i < visibleFolders.length; i += BATCH_SIZE) {
+            if (!isMounted) break;
+
+            const batch = visibleFolders.slice(i, i + BATCH_SIZE);
+            
+            // Execute batch in parallel
+            const results = await Promise.all(
+                batch.map(async (folder) => {
+                    const count = await fetchFolderCount(apiKey, folder.id);
+                    return { id: folder.id, count };
+                })
+            );
+
+            if (!isMounted) break;
+
+            // Update cache immediately after batch finishes
+            setStatsCache(prev => {
+                const update = { ...prev };
+                results.forEach(res => {
+                    update[res.id] = res.count;
+                });
+                return update;
+            });
+
+            // Small delay to allow UI to breathe and prevent rapid-fire API errors
+            await new Promise(r => setTimeout(r, 50));
+        }
+    };
+
+    processBatches();
+
+    return () => { isMounted = false; };
+  }, [filteredItems, apiKey]); // statsCache removed from dep array to avoid re-triggering loop
+
+
+  // --- Handlers ---
+
+  const handleManualImport = (newItems: DirectoryItem[]) => {
+    setItems(newItems);
+  };
+
+  const handleConnectSave = (key: string) => {
+      setApiKey(key);
+      setFolderCache({}); 
+      setHistory([{ id: ROOT_ID, name: 'Kho Hồ Sơ Tổng' }]);
+      setSearchQuery('');
+      setError(null);
+  };
+
+  const handleFolderNavigate = (item: DirectoryItem) => {
+      setHistory(prev => [...prev, { id: item.id, name: item.name }]);
+      setSearchQuery(''); 
+      setActiveTag(null);
+      setNextPageToken(null); 
+  };
+
+  const handleBreadcrumbNavigate = (index: number) => {
+      setHistory(prev => prev.slice(0, index + 1));
+      setSearchQuery('');
+      setActiveTag(null);
+      setNextPageToken(null);
+  };
+
+  const handleOpenPreview = (item: DirectoryItem) => {
+    if (item) setPreviewItem(item);
+  };
+
+  const handleClosePreview = () => setPreviewItem(null);
+  const handleOpenConnectModal = () => setIsConnectModalOpen(true);
+  const handleCloseConnectModal = () => setIsConnectModalOpen(false);
+  const handleOpenImportModal = () => setIsImportModalOpen(true);
+  const handleCloseImportModal = () => setIsImportModalOpen(false);
+
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      // Client-side search only: Do nothing here, the UI updates via filteredItems
+  };
+
+  const handleClearSearch = () => {
+      setSearchQuery(''); 
+      // No need to refresh data, just clear the filter
+  };
+
+  const handleRefreshClick = () => {
+    setNextPageToken(null);
+    setFolderCache({});
+    const newDate = calculateDate(timeRange);
+    setFilterDate(newDate);
+  };
+  
+  const handleTimeRangeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const newVal = e.target.value as TimeRange;
+      setNextPageToken(null);
+      setTimeRange(newVal);
+      setFilterDate(calculateDate(newVal));
+  };
+
+  const handleLimitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      setNextPageToken(null);
+      const val = e.target.value;
+      setLimit(val === 'all' ? 'all' : Number(val) as LimitOption);
+  };
+
+  // Statistics Calculation
+  const stats = useMemo(() => {
+    const source = searchQuery || activeTag ? filteredItems : items;
+    const folders = source.filter(i => i.type === ItemType.FOLDER).length;
+    const files = source.filter(i => i.type === ItemType.FILE).length;
+    return { folders, files, total: source.length };
+  }, [filteredItems, items, searchQuery, activeTag]);
+
+  // Preview Navigation Logic
+  const currentPreviewIndex = useMemo(() => {
+    if (!previewItem) return -1;
+    return filteredItems.findIndex(i => i.id === previewItem.id);
+  }, [previewItem, filteredItems]);
+
+  const hasNext = currentPreviewIndex !== -1 && currentPreviewIndex < filteredItems.length - 1;
+  const hasPrev = currentPreviewIndex > 0;
+
+  const handleNextPreview = useCallback(() => {
+    if (hasNext) {
+        setPreviewItem(filteredItems[currentPreviewIndex + 1]);
+    }
+  }, [hasNext, filteredItems, currentPreviewIndex]);
+
+  const handlePrevPreview = useCallback(() => {
+    if (hasPrev) {
+        setPreviewItem(filteredItems[currentPreviewIndex - 1]);
+    }
+  }, [hasPrev, filteredItems, currentPreviewIndex]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm backdrop-blur-lg bg-white/90 supports-[backdrop-filter]:bg-white/60">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => handleBreadcrumbNavigate(0)}>
+            <div className="bg-blue-600 p-1.5 rounded-lg text-white shadow-lg shadow-blue-600/20">
+              <FolderIcon className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-900 tracking-tight leading-tight">Tra Cứu Hồ Sơ (Nội bộ)</h1>
+              <a href={SHARED_DRIVE_LINK} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline font-medium flex items-center gap-1">
+                Drive Gốc ↗
+              </a>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <form onSubmit={handleSearchSubmit} className="hidden md:flex items-center relative group">
+              <div className="flex items-center bg-gray-100/80 rounded-lg p-0.5 border border-transparent focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
+                  <div className="relative flex items-center">
+                    <SearchIcon className="absolute left-3 w-4 h-4 text-gray-400" />
+                    <input type="text" placeholder="Lọc nhanh tên..." value={searchQuery} onChange={handleSearchInputChange} className="pl-9 pr-2 py-1.5 w-64 bg-transparent border-none focus:ring-0 text-sm outline-none placeholder-gray-400 text-gray-800" />
+                    {searchQuery && (
+                         <button type="button" onClick={handleClearSearch} className="absolute right-2 text-gray-400 hover:text-gray-600">
+                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                         </button>
+                    )}
+                  </div>
+              </div>
+            </form>
+            
+            <button onClick={handleOpenConnectModal} className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors border text-sm ${apiKey ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`} title="Cấu hình API Key">
+                <span className="hidden sm:inline">{apiKey ? 'Đã kết nối' : 'Nhập API Key'}</span>
+            </button>
+          </div>
+        </div>
+        
+        <div className="md:hidden px-4 pb-3 flex flex-col gap-2 border-t border-gray-100">
+           <form onSubmit={handleSearchSubmit} className="relative flex gap-2 pt-2">
+               <input type="text" placeholder="Lọc nhanh tên..." value={searchQuery} onChange={handleSearchInputChange} className="flex-1 py-2 px-3 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+           </form>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+        <Breadcrumbs items={history} onNavigate={handleBreadcrumbNavigate} />
+
+        {/* Actions Bar */}
+        <div className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4 border-b border-gray-200 pb-5">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2 tracking-tight">
+                {history.length > 1 ? history[history.length - 1].name : 'Danh sách hồ sơ'}
+            </h2>
+            <div className="text-gray-500 mt-1.5 text-xs font-medium flex items-center gap-2">
+                {isLoading ? (
+                    <span className="flex items-center gap-2 text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
+                        <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        Đang đồng bộ dữ liệu...
+                    </span>
+                ) : (
+                    <span className="flex items-center gap-2">
+                         {searchQuery ? (
+                            <span className="text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                                Đang lọc: <strong>{stats.total}</strong> kết quả
+                            </span>
+                         ) : (
+                            <span className="text-gray-600">
+                                Hiển thị <strong>{stats.total}</strong> mục
+                            </span>
+                         )}
+                         
+                         {/* Detailed Counts */}
+                         <span className="text-gray-400 mx-1">|</span>
+                         <span className="flex items-center gap-1.5" title="Số lượng thư mục con">
+                             <svg className="w-3.5 h-3.5 text-blue-400" viewBox="0 0 24 24" fill="currentColor"><path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3V18a3 3 0 0 0 3 3h15ZM1.5 10.146V6a3 3 0 0 1 3-3h5.379a2.25 2.25 0 0 1 1.59.659l2.122 2.121c.14.141.331.22.53.22H19.5a3 3 0 0 1 3 3v1.146A4.483 4.483 0 0 0 19.5 9h-15a4.483 4.483 0 0 0-3 1.146Z" /></svg>
+                             {stats.folders} hồ sơ
+                         </span>
+                         <span className="text-gray-400 mx-1">•</span>
+                         <span className="flex items-center gap-1.5" title="Số lượng tệp tin">
+                             <svg className="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M5.625 1.5H9a3.75 3.75 0 0 1 3.75 3.75v1.875c0 1.036.84 1.875 1.875 1.875H16.5a3.75 3.75 0 0 1 3.75 3.75v7.875c0 1.035-.84 1.875-1.875 1.875H5.625a1.875 1.875 0 0 1-1.875-1.875V3.375c0-1.036.84-1.875 1.875-1.875ZM12.75 12a.75.75 0 0 0-1.5 0v2.25H9a.75.75 0 0 0 0 1.5h2.25V18a.75.75 0 0 0 1.5 0v-2.25H15a.75.75 0 0 0 0-1.5h-2.25V12Z" clipRule="evenodd" /></svg>
+                             {stats.files} tệp tin
+                         </span>
+
+                        {isFetchingMore && (
+                            <span className="ml-2 text-orange-500 bg-orange-50 px-2 py-0.5 rounded flex items-center gap-1">
+                                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                Đang tải thêm...
+                            </span>
+                        )}
+                    </span>
+                )}
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+              <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                     <svg className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                  </div>
+                  <select value={timeRange} onChange={handleTimeRangeChange} disabled={isLoading || isFetchingMore} className="appearance-none bg-white border border-gray-200 text-gray-700 text-sm py-2 pl-9 pr-8 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-gray-50 transition-colors shadow-sm font-medium">
+                      <option value="7">7 ngày qua</option>
+                      <option value="30">30 ngày qua</option>
+                      <option value="90">3 tháng qua</option>
+                      <option value="180">6 tháng qua</option>
+                      <option value="365">1 năm qua</option>
+                      <option value="all">Tất cả thời gian</option>
+                  </select>
+              </div>
+              
+              <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                     <svg className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" /></svg>
+                  </div>
+                  <select value={limit} onChange={handleLimitChange} disabled={isLoading || isFetchingMore} className="appearance-none bg-white border border-gray-200 text-gray-700 text-sm py-2 pl-9 pr-8 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-gray-50 transition-colors shadow-sm font-medium">
+                      <option value="100">100 hồ sơ</option>
+                      <option value="500">500 hồ sơ</option>
+                      <option value="1000">1000 hồ sơ</option>
+                      <option value="3000">3000 hồ sơ</option>
+                      <option value="5000">5000 hồ sơ</option>
+                      <option value="all">Tất cả (Max)</option>
+                  </select>
+              </div>
+
+              {apiKey && (
+                  <button onClick={handleRefreshClick} disabled={isLoading} className="bg-white text-gray-600 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-100 border border-gray-200 px-3 py-2 rounded-lg transition-all shadow-sm flex items-center justify-center" title="Làm mới dữ liệu">
+                    <svg className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  </button>
+              )}
+          </div>
+        </div>
+
+        {/* ERROR DISPLAYS */}
+        {error && (
+             <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-4 rounded-xl text-sm flex flex-col gap-2 shadow-sm">
+                <div className="flex items-center gap-3 font-bold text-red-800">
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    Lỗi kết nối API
+                </div>
+                <p>{error}</p>
+                
+                {error.includes("API_KEY_BLOCKED") && (
+                    <div className="mt-2 bg-white p-3 rounded-lg border border-red-100">
+                        <p className="font-bold text-red-800 mb-1">Hướng dẫn khắc phục:</p>
+                        <ul className="list-disc ml-5 space-y-1 text-gray-700">
+                            <li>Truy cập <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-800 font-semibold">Google Cloud Console &rarr; Credentials</a>.</li>
+                            <li>Chọn API Key đang sử dụng.</li>
+                            <li>Tại mục <strong>"API restrictions"</strong> (Hạn chế API):
+                                <ul className="list-circle ml-5 mt-1 text-xs text-gray-600">
+                                    <li>Chọn <strong>"Don't restrict key"</strong> (Không hạn chế).</li>
+                                    <li>HOẶC chọn <strong>"Restrict key"</strong> rồi tích chọn thêm <strong>"Google Drive API"</strong> vào danh sách.</li>
+                                </ul>
+                            </li>
+                            <li>Lưu lại và đợi 1-2 phút rồi thử lại.</li>
+                        </ul>
+                    </div>
+                )}
+
+                {(error.includes("Anyone with the link") || error.includes("insufficientFilePermissions")) && (
+                    <div className="mt-2 bg-white p-3 rounded-lg border border-red-100">
+                        <p className="font-bold text-red-800 mb-1">Cách mở quyền truy cập:</p>
+                        <ol className="list-decimal ml-5 space-y-1 text-gray-700">
+                            <li>Truy cập <a href={SHARED_DRIVE_LINK} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-800 font-semibold">Google Drive</a>.</li>
+                            <li>Nhấn chuột phải vào thư mục $\rightarrow$ Chọn <strong>Chia sẻ (Share)</strong>.</li>
+                            <li>Tại mục "Quyền truy cập chung" (General access), đổi từ "Hạn chế" sang <strong>"Bất kỳ ai có đường liên kết" (Anyone with the link)</strong>.</li>
+                            <li>Nhấn <strong>Xong (Done)</strong> và tải lại trang này.</li>
+                        </ol>
+                    </div>
+                )}
+
+                <div className="flex gap-3 mt-2">
+                    <button onClick={handleOpenConnectModal} className="bg-red-600 text-white px-4 py-2 rounded-lg self-start font-medium hover:bg-red-700 transition-colors shadow-sm">Cấu hình lại Key</button>
+                    <button onClick={handleRefreshClick} className="bg-white border border-red-300 text-red-700 px-4 py-2 rounded-lg self-start font-medium hover:bg-red-50 transition-colors shadow-sm">Thử lại</button>
+                </div>
+             </div>
+        )}
+
+        {/* Grid */}
+        {isLoading && items.length === 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-pulse">
+                {[1,2,3,4,5,6,7,8,9,10,11,12].map(i => <div key={i} className="h-48 bg-gray-200 rounded-xl"></div>)}
+            </div>
+        ) : filteredItems.length > 0 ? (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                {filteredItems.map(item => (
+                <FolderCard 
+                    key={item.id} 
+                    item={item} 
+                    onNavigate={handleFolderNavigate} 
+                    onPreview={handleOpenPreview}
+                    folderCount={statsCache[item.id]} 
+                />
+                ))}
+            </div>
+            {isFetchingMore && (
+                <div className="mt-8 flex justify-center">
+                    <div className="bg-white border border-gray-200 shadow-lg rounded-full px-6 py-2 flex items-center gap-3">
+                         <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span className="text-sm font-medium text-gray-700">Đang tải thêm...</span>
+                    </div>
+                </div>
+            )}
+          </>
+        ) : (
+          !error && (
+            <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
+                <h3 className="text-xl font-bold text-gray-900">
+                    {apiKey ? 'Không tìm thấy dữ liệu' : 'Chào mừng!'}
+                </h3>
+                <p className="text-gray-500 mt-2 max-w-md mx-auto">
+                    {apiKey 
+                     ? (searchQuery ? 'Không có mục nào khớp với từ khóa tìm kiếm trong danh sách đã tải.' : 'Thư mục trống hoặc không khớp với bộ lọc thời gian.')
+                     : 'Vui lòng nhập API Key để bắt đầu duyệt tài liệu.'}
+                </p>
+                <div className="mt-6 flex flex-col items-center gap-3">
+                    {apiKey ? (
+                        <button onClick={handleClearSearch} className="text-gray-500 hover:text-gray-700 text-sm underline mt-2">
+                            {searchQuery ? 'Xóa bộ lọc tìm kiếm' : 'Quay lại thư mục gốc'}
+                        </button>
+                    ) : (
+                        <button onClick={handleOpenConnectModal} className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium shadow hover:bg-blue-700">
+                            Nhập API Key Ngay
+                        </button>
+                    )}
+                </div>
+            </div>
+          )
+        )}
+      </main>
+
+      <SmartImportModal isOpen={isImportModalOpen} onClose={handleCloseImportModal} onImport={handleManualImport} />
+      <ConnectModal isOpen={isConnectModalOpen} onClose={handleCloseConnectModal} onSave={handleConnectSave} />
+      
+      <FilePreviewModal 
+        item={previewItem} 
+        onClose={handleClosePreview}
+        onNext={handleNextPreview}
+        onPrev={handlePrevPreview}
+        hasNext={hasNext}
+        hasPrev={hasPrev} 
+      />
+
+      <footer className="bg-white border-t border-gray-200 py-6 mt-auto">
+          <div className="max-w-7xl mx-auto px-4 text-center text-xs text-gray-400">
+              <p>Hệ thống Tra cứu Hồ sơ Nội soi (JS Client Mode) &copy; 2024</p>
+          </div>
+      </footer>
+    </div>
+  );
+};
+
+export default App;
