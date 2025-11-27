@@ -78,6 +78,9 @@ const App: React.FC = () => {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Logo error state
+  const [logoError, setLogoError] = useState(false);
 
   // Refs for race condition handling
   const latestRequestRef = useRef<number>(0);
@@ -278,6 +281,11 @@ const App: React.FC = () => {
                 });
                 return update;
             });
+            
+            // Update Ref immediately for subsequent checks in this same loop context (if needed)
+            results.forEach(res => {
+                statsCacheRef.current[res.id] = res.count;
+            });
 
             // Small delay to allow UI to breathe and prevent rapid-fire API errors
             await new Promise(r => setTimeout(r, 50));
@@ -393,15 +401,28 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm backdrop-blur-lg bg-white/90 supports-[backdrop-filter]:bg-white/60">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity" onClick={() => handleBreadcrumbNavigate(0)}>
-            <div className="bg-blue-600 p-1.5 rounded-lg text-white shadow-lg shadow-blue-600/20">
-              <FolderIcon className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-gray-900 tracking-tight leading-tight">Tra Cứu Hồ Sơ (Nội bộ)</h1>
-              <a href={SHARED_DRIVE_LINK} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline font-medium flex items-center gap-1">
-                Drive Gốc ↗
+            {/* Logo Image with Fallback */}
+            {logoError ? (
+                <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-sm flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+                        <path d="M19 2H5a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V5a3 3 0 0 0-3-3Zm-7 14a1 1 0 0 1-2 0v-3H7a1 1 0 0 1 0-2h3V8a1 1 0 0 1 2 0v3h3a1 1 0 0 1 0 2h-3v3Z"/>
+                    </svg>
+                </div>
+            ) : (
+                <img 
+                    src="/logo.png" 
+                    alt="Logo ENT Clinic" 
+                    className="w-14 h-14 object-contain rounded-xl bg-white"
+                    onError={() => setLogoError(true)}
+                />
+            )}
+            
+            <div className="flex flex-col">
+              <h1 className="text-xl font-bold text-blue-900 tracking-tight leading-tight uppercase">PHÒNG KHÁM TAI MŨI HỌNG BUÔN HỒ</h1>
+              <a href={SHARED_DRIVE_LINK} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1 mt-0.5">
+                Kho dữ liệu Drive ↗
               </a>
             </div>
           </div>
