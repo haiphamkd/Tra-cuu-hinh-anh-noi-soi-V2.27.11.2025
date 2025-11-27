@@ -112,9 +112,12 @@ export const FolderCard: React.FC<Props> = ({ item, onNavigate, onPreview, folde
                     {item.name}
                 </h3>
                 
-                {/* Blue/White Count Badge (Tag Style) */}
+                {/* Count Badge (Tag Style) - Orange if > 1, Blue otherwise */}
                 {isFolder && folderCount !== undefined && folderCount > 0 && (
-                     <span className="flex-shrink-0 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow-sm transform group-hover:scale-105 transition-transform leading-tight" title={`${folderCount} thư mục con`}>
+                     <span 
+                        className={`flex-shrink-0 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow-sm transform group-hover:scale-105 transition-transform leading-tight ${folderCount > 1 ? 'bg-orange-600' : 'bg-blue-600'}`} 
+                        title={`${folderCount} thư mục con`}
+                     >
                          {folderCount}
                      </span>
                 )}
