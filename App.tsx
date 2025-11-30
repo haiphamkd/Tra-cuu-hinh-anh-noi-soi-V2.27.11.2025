@@ -4,32 +4,36 @@ import { SearchIcon, FolderIcon } from './components/Icons';
 import { FolderCard } from './components/FolderCard';
 import { SmartImportModal } from './components/SmartImportModal';
 import { ConnectModal } from './components/ConnectModal';
+import { AdminAuthModal } from './components/AdminAuthModal';
 import { Breadcrumbs } from './components/Breadcrumbs';
 import { FilePreviewModal } from './components/FilePreviewModal';
 import { fetchDriveData, fetchFolderCount } from './services/apiService';
 import { DirectoryItem, ApiResponse, ItemType } from './types';
 
-// Default Fallback ID
-const DEFAULT_ROOT_ID = "1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk";
-// Hardcoded API Key for internal use
-const DEFAULT_API_KEY = "AIzaSyBITtcZhbe4lu7HL1uroOSpe5SJpQytsmw";
+// --- HARDCODED CONFIGURATION ---
+// Cấu hình cứng tại đây để chạy ngay lập tức
+const HARDCODED_ROOT_ID = "1KITVOLer-cLkQ8dmgYYaG8qaWzj1YJr1";
+const HARDCODED_API_KEY = "AIzaSyBITtcZhbe4lu7HL1uroOSpe5SJpQytsmw";
 
 interface HistoryItem {
   id: string;
   name: string;
 }
 
-type TimeRange = '7' | '30' | '90' | '180' | '365' | 'all';
-type LimitOption = 100 | 500 | 1000 | 3000 | 5000 | 'all';
+type TimeRange = '7' | '14' | '30' | '90' | '180' | '365' | 'all';
+type LimitOption = 100 | 500 | 1000 | 2000 | 3000 | 5000 | 'all';
 
 const App: React.FC = () => {
   // --- CONFIG STATE ---
-  const [apiKey, setApiKey] = useState<string>(() => {
-    return localStorage.getItem('drive-api-key-v1') || DEFAULT_API_KEY;
+  
+  // Root ID: LocalStorage > Env Var > Hardcoded
+  const [rootFolderId, setRootFolderId] = useState<string>(() => {
+    return localStorage.getItem('drive-root-id-v1') || import.meta.env?.VITE_ROOT_FOLDER_ID || HARDCODED_ROOT_ID;
   });
 
-  const [rootFolderId, setRootFolderId] = useState<string>(() => {
-    return localStorage.getItem('drive-root-id-v1') || DEFAULT_ROOT_ID;
+  // API Key: LocalStorage > Env Var > Hardcoded
+  const [apiKey, setApiKey] = useState<string>(() => {
+      return localStorage.getItem('drive-api-key-v1') || import.meta.env?.VITE_GOOGLE_API_KEY || HARDCODED_API_KEY;
   });
 
   // State Management
@@ -71,19 +75,23 @@ const App: React.FC = () => {
       return d.toISOString();
   };
 
-  const [timeRange, setTimeRange] = useState<TimeRange>('30'); 
+  const [timeRange, setTimeRange] = useState<TimeRange>('14'); 
   // Stable filter date state to ensure pageToken remains valid during pagination
-  const [filterDate, setFilterDate] = useState<string>(() => calculateDate('30'));
+  const [filterDate, setFilterDate] = useState<string>(() => calculateDate('14'));
 
-  // Default Limit set to 3000 as requested
-  const [limit, setLimit] = useState<LimitOption>(3000); 
+  // Default Limit set to 2000 as requested
+  const [limit, setLimit] = useState<LimitOption>(2000); 
   
   // Pagination State
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
 
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  
+  // Auth & Config Modals
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [isAdminAuthOpen, setIsAdminAuthOpen] = useState(false);
+
   const [previewItem, setPreviewItem] = useState<DirectoryItem | null>(null);
   
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -95,12 +103,6 @@ const App: React.FC = () => {
 
   // Refs for race condition handling
   const latestRequestRef = useRef<number>(0);
-
-  // Save Config
-  useEffect(() => {
-    if(apiKey) localStorage.setItem('drive-api-key-v1', apiKey);
-    if(rootFolderId) localStorage.setItem('drive-root-id-v1', rootFolderId);
-  }, [apiKey, rootFolderId]);
 
   // Sync items state to ref
   useEffect(() => {
@@ -116,7 +118,7 @@ const App: React.FC = () => {
       token?: string
     ) => {
       if (!key) {
-          if (!isConnectModalOpen) setError("Vui lòng nhập API Key để bắt đầu.");
+          if (!isConnectModalOpen) setError("Chưa có API Key. Vui lòng kiểm tra biến môi trường hoặc cấu hình.");
           return;
       }
 
@@ -210,7 +212,6 @@ const App: React.FC = () => {
   // Trigger subsequent fetches if token exists
   useEffect(() => {
       // STOP Pagination if we reached the user-requested limit
-      // Use Ref to check limit without adding 'items' to dependency array
       if (typeof limit === 'number' && itemsRef.current.length >= limit) {
           return;
       }
@@ -309,12 +310,19 @@ const App: React.FC = () => {
     setItems(newItems);
   };
 
-  const handleConnectSave = (key: string, newFolderId: string) => {
-      if (key) setApiKey(key);
+  const handleConnectSave = (newFolderId: string, newApiKey: string) => {
+      // Save ID
       if (newFolderId && newFolderId !== rootFolderId) {
           setRootFolderId(newFolderId);
-          // History reset is handled by useEffect on rootFolderId change
+          localStorage.setItem('drive-root-id-v1', newFolderId);
       }
+      
+      // Save Key
+      if (newApiKey && newApiKey !== apiKey) {
+          setApiKey(newApiKey);
+          localStorage.setItem('drive-api-key-v1', newApiKey);
+      }
+
       setSearchQuery('');
       setError(null);
   };
@@ -338,8 +346,17 @@ const App: React.FC = () => {
   };
 
   const handleClosePreview = () => setPreviewItem(null);
-  const handleOpenConnectModal = () => setIsConnectModalOpen(true);
+  
+  // Auth flow for config
+  const handleOpenConfig = () => setIsAdminAuthOpen(true);
+  const handleAuthSuccess = () => {
+      setIsAdminAuthOpen(false);
+      setIsConnectModalOpen(true);
+  }
+  
   const handleCloseConnectModal = () => setIsConnectModalOpen(false);
+  const handleCloseAuthModal = () => setIsAdminAuthOpen(false);
+  
   const handleOpenImportModal = () => setIsImportModalOpen(true);
   const handleCloseImportModal = () => setIsImportModalOpen(false);
 
@@ -447,8 +464,14 @@ const App: React.FC = () => {
               </div>
             </form>
             
-            <button onClick={handleOpenConnectModal} className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors border text-sm ${apiKey ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`} title="Cấu hình API Key">
-                <span className="hidden sm:inline">{apiKey ? 'Đã kết nối' : 'Kết nối'}</span>
+            <button 
+                onClick={handleOpenConfig} 
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors border text-sm ${apiKey ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`} 
+                title="Cấu hình hệ thống"
+            >
+                <span className="hidden sm:inline">
+                    {apiKey ? 'Cấu hình' : 'Thiếu API Key'}
+                </span>
             </button>
           </div>
         </div>
@@ -518,6 +541,7 @@ const App: React.FC = () => {
                   </div>
                   <select value={timeRange} onChange={handleTimeRangeChange} disabled={isLoading || isFetchingMore} className="appearance-none bg-white border border-gray-200 text-gray-700 text-sm py-2 pl-9 pr-8 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-gray-50 transition-colors shadow-sm font-medium">
                       <option value="7">7 ngày qua</option>
+                      <option value="14">2 tuần qua</option>
                       <option value="30">30 ngày qua</option>
                       <option value="90">3 tháng qua</option>
                       <option value="180">6 tháng qua</option>
@@ -534,9 +558,10 @@ const App: React.FC = () => {
                       <option value="100">100 hồ sơ</option>
                       <option value="500">500 hồ sơ</option>
                       <option value="1000">1000 hồ sơ</option>
+                      <option value="2000">2000 hồ sơ</option>
                       <option value="3000">3000 hồ sơ</option>
                       <option value="5000">5000 hồ sơ</option>
-                      <option value="all">Tất cả (Max)</option>
+                      <option value="all">Tất cả</option>
                   </select>
               </div>
 
@@ -587,7 +612,7 @@ const App: React.FC = () => {
                 )}
 
                 <div className="flex gap-3 mt-2">
-                    <button onClick={handleOpenConnectModal} className="bg-red-600 text-white px-4 py-2 rounded-lg self-start font-medium hover:bg-red-700 transition-colors shadow-sm">Cấu hình lại</button>
+                    <button onClick={handleOpenConfig} className="bg-red-600 text-white px-4 py-2 rounded-lg self-start font-medium hover:bg-red-700 transition-colors shadow-sm">Cấu hình hệ thống</button>
                     <button onClick={handleRefreshClick} className="bg-white border border-red-300 text-red-700 px-4 py-2 rounded-lg self-start font-medium hover:bg-red-50 transition-colors shadow-sm">Thử lại</button>
                 </div>
              </div>
@@ -632,16 +657,12 @@ const App: React.FC = () => {
                 <p className="text-gray-500 mt-2 max-w-md mx-auto">
                     {apiKey 
                      ? (searchQuery ? 'Không có mục nào khớp với từ khóa tìm kiếm trong danh sách đã tải.' : 'Thư mục trống hoặc không khớp với bộ lọc thời gian.')
-                     : 'Vui lòng nhập API Key để bắt đầu duyệt tài liệu.'}
+                     : 'Vui lòng kiểm tra biến môi trường process.env.API_KEY để bắt đầu duyệt tài liệu.'}
                 </p>
                 <div className="mt-6 flex flex-col items-center gap-3">
-                    {apiKey ? (
+                    {apiKey && (
                         <button onClick={handleClearSearch} className="text-gray-500 hover:text-gray-700 text-sm underline mt-2">
                             {searchQuery ? 'Xóa bộ lọc tìm kiếm' : 'Quay lại thư mục gốc'}
-                        </button>
-                    ) : (
-                        <button onClick={handleOpenConnectModal} className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium shadow hover:bg-blue-700">
-                            Nhập API Key Ngay
                         </button>
                     )}
                 </div>
@@ -651,11 +672,19 @@ const App: React.FC = () => {
       </main>
 
       <SmartImportModal isOpen={isImportModalOpen} onClose={handleCloseImportModal} onImport={handleManualImport} />
+      
+      <AdminAuthModal 
+        isOpen={isAdminAuthOpen}
+        onClose={handleCloseAuthModal}
+        onSuccess={handleAuthSuccess}
+      />
+      
       <ConnectModal 
         isOpen={isConnectModalOpen} 
         onClose={handleCloseConnectModal} 
         onSave={handleConnectSave} 
         initialFolderId={rootFolderId} 
+        initialApiKey={apiKey}
       />
       
       <FilePreviewModal 

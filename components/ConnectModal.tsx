@@ -1,43 +1,37 @@
-
 import React, { useState, useEffect } from 'react';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (key: string, folderId: string) => void;
+  onSave: (folderId: string, apiKey: string) => void;
   initialFolderId?: string;
+  initialApiKey?: string;
 }
 
-export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initialFolderId = '' }) => {
-  const [apiKey, setApiKey] = useState('');
+export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initialFolderId = '', initialApiKey = '' }) => {
   const [folderInput, setFolderInput] = useState('');
+  const [apiKeyInput, setApiKeyInput] = useState('');
 
-  // Load initial value when modal opens
+  // Load initial values
   useEffect(() => {
     if (isOpen) {
         setFolderInput(initialFolderId);
+        setApiKeyInput(initialApiKey);
     }
-  }, [isOpen, initialFolderId]);
+  }, [isOpen, initialFolderId, initialApiKey]);
 
   if (!isOpen) return null;
 
   const extractFolderId = (input: string): string => {
-      // Case 1: Full URL (https://drive.google.com/drive/folders/1ABC...)
       const match = input.match(/\/folders\/([a-zA-Z0-9-_]+)/);
       if (match && match[1]) return match[1];
-      
-      // Case 2: Just the ID
       if (input.length > 20 && !input.includes('/')) return input;
-
-      return input; // Return as is (fallback)
+      return input;
   };
 
   const handleSave = () => {
     const cleanId = extractFolderId(folderInput.trim());
-    
-    // Allow saving if at least one field is provided (or keeping existing if empty but intended)
-    // Here we enforce folder ID if changed
-    onSave(apiKey.trim(), cleanId);
+    onSave(cleanId, apiKeyInput.trim());
     onClose();
   };
 
@@ -56,13 +50,22 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-gray-50/50">
           
+          {/* WARNING BANNER */}
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex gap-3 items-start">
+             <svg className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+             <div className="text-sm text-orange-800">
+                 <strong>Lưu ý quan trọng:</strong> Cấu hình bạn lưu tại đây chỉ được áp dụng trên <u>trình duyệt này</u> (Local).
+                 <br/>
+                 Để áp dụng cho tất cả mọi người, vui lòng cập nhật <strong>Environment Variables</strong> trên Netlify.
+             </div>
+          </div>
+
           {/* Section 1: Folder Config */}
-          <div className="space-y-3">
+          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
               <label className="block text-sm font-bold text-gray-800 flex items-center gap-2">
                   Link Thư mục Gốc (Google Drive):
-                  <span className="text-xs font-normal text-red-500 bg-red-50 px-2 py-0.5 rounded-full">* Quan trọng</span>
               </label>
               <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -72,34 +75,19 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
                   </div>
                   <input 
                       type="text" 
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm text-gray-800 placeholder-gray-400 shadow-sm"
-                      placeholder="Dán link thư mục vào đây (https://drive.google.com/...)"
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm text-gray-800 placeholder-gray-400"
+                      placeholder="https://drive.google.com/drive/folders/..."
                       value={folderInput}
                       onChange={(e) => setFolderInput(e.target.value)}
                   />
               </div>
-              <p className="text-xs text-gray-500 ml-1">
-                  Dán toàn bộ đường link từ trình duyệt, hệ thống sẽ tự lấy ID.
-              </p>
           </div>
 
-          <hr className="border-gray-100" />
-
-          {/* Section 2: API Key */}
-          <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                  <label className="block text-sm font-bold text-gray-800">
-                      API Key (Nâng cao):
-                  </label>
-                  <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded font-medium border border-green-100">
-                      Đã tích hợp sẵn Key nội bộ
-                  </span>
-              </div>
-              
-              <div className="bg-blue-50 p-3 rounded-lg text-xs text-blue-800 border border-blue-100">
-                  Chỉ nhập nếu bạn muốn dùng Key riêng. Để trống để dùng Key mặc định của phòng khám.
-              </div>
-
+          {/* Section 2: API Key Config */}
+          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
+              <label className="block text-sm font-bold text-gray-800 flex items-center gap-2">
+                  Google Drive API Key:
+              </label>
               <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                      <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -108,12 +96,15 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
                   </div>
                   <input 
                       type="text" 
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-mono text-gray-800 placeholder-gray-400 shadow-sm"
-                      placeholder="AIzaSyD... (Để trống để dùng mặc định)"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-mono text-gray-800 placeholder-gray-400"
+                      placeholder="AIzaSy..."
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
                   />
               </div>
+              <p className="text-xs text-gray-500">
+                  Key cần được tạo trên Google Cloud Console và kích hoạt Drive API.
+              </p>
           </div>
         </div>
 
@@ -123,10 +114,9 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
            </button>
            <button 
              onClick={handleSave}
-             disabled={!folderInput.trim()}
-             className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-2"
+             className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-2"
            >
-             Lưu Cấu Hình
+             Lưu Cấu Hình (Local)
            </button>
         </div>
       </div>
