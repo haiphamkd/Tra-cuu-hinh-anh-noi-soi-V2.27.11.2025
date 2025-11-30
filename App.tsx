@@ -9,9 +9,8 @@ import { FilePreviewModal } from './components/FilePreviewModal';
 import { fetchDriveData, fetchFolderCount } from './services/apiService';
 import { DirectoryItem, ApiResponse, ItemType } from './types';
 
-// Updated link as requested
-const SHARED_DRIVE_LINK = "https://drive.google.com/drive/folders/1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk?usp=drive_link";
-const ROOT_ID = "1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk";
+// Default Fallback ID
+const DEFAULT_ROOT_ID = "1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk";
 // Hardcoded API Key for internal use
 const DEFAULT_API_KEY = "AIzaSyBITtcZhbe4lu7HL1uroOSpe5SJpQytsmw";
 
@@ -21,10 +20,18 @@ interface HistoryItem {
 }
 
 type TimeRange = '7' | '30' | '90' | '180' | '365' | 'all';
-// Removed SearchScope as we are doing client-side search only
 type LimitOption = 100 | 500 | 1000 | 3000 | 5000 | 'all';
 
 const App: React.FC = () => {
+  // --- CONFIG STATE ---
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return localStorage.getItem('drive-api-key-v1') || DEFAULT_API_KEY;
+  });
+
+  const [rootFolderId, setRootFolderId] = useState<string>(() => {
+    return localStorage.getItem('drive-root-id-v1') || DEFAULT_ROOT_ID;
+  });
+
   // State Management
   const [items, setItems] = useState<DirectoryItem[]>([]);
   // Ref to track items without triggering re-renders in callbacks
@@ -41,13 +48,17 @@ const App: React.FC = () => {
     statsCacheRef.current = statsCache;
   }, [statsCache]);
   
-  // Changed: Initialize with DEFAULT_API_KEY
-  const [apiKey, setApiKey] = useState<string>(() => {
-    return localStorage.getItem('drive-api-key-v1') || DEFAULT_API_KEY;
-  });
-  
   // Navigation State
-  const [history, setHistory] = useState<HistoryItem[]>([{ id: ROOT_ID, name: 'Kho Hồ Sơ Tổng' }]);
+  // Initial history depends on rootFolderId
+  const [history, setHistory] = useState<HistoryItem[]>([{ id: rootFolderId, name: 'Kho Hồ Sơ Tổng' }]);
+  
+  // Effect to reset history when rootFolderId changes (e.g. after config update)
+  useEffect(() => {
+    setHistory([{ id: rootFolderId, name: 'Kho Hồ Sơ Tổng' }]);
+    setFolderCache({});
+    setItems([]);
+  }, [rootFolderId]);
+
   const currentFolderId = history[history.length - 1]?.id;
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,10 +96,11 @@ const App: React.FC = () => {
   // Refs for race condition handling
   const latestRequestRef = useRef<number>(0);
 
-  // Save API Key
+  // Save Config
   useEffect(() => {
     if(apiKey) localStorage.setItem('drive-api-key-v1', apiKey);
-  }, [apiKey]);
+    if(rootFolderId) localStorage.setItem('drive-root-id-v1', rootFolderId);
+  }, [apiKey, rootFolderId]);
 
   // Sync items state to ref
   useEffect(() => {
@@ -136,7 +148,6 @@ const App: React.FC = () => {
               isInitialLoad && 
               data.items.length === 0 && 
               dateFilter !== 'all' 
-              // Removed root check to allow auto-expand on root too
             ) {
               console.log("Folder empty with filter. Retrying with ALL time...");
               const retryData = await fetchDriveData(
@@ -194,7 +205,7 @@ const App: React.FC = () => {
               setIsFetchingMore(false);
           }
       }
-  }, [isConnectModalOpen]); // Removed items.length dependency
+  }, [isConnectModalOpen]);
 
   // Trigger subsequent fetches if token exists
   useEffect(() => {
@@ -210,7 +221,7 @@ const App: React.FC = () => {
           }, 100);
           return () => clearTimeout(timer);
       }
-  }, [nextPageToken, isLoading, isFetchingMore, error, apiKey, currentFolderId, filterDate, limit, refreshData]); // Removed items.length
+  }, [nextPageToken, isLoading, isFetchingMore, error, apiKey, currentFolderId, filterDate, limit, refreshData]);
 
 
   // --- MAIN CACHE & FETCH LOGIC ---
@@ -219,8 +230,6 @@ const App: React.FC = () => {
       if (!apiKey) return;
 
       refreshData(apiKey, currentFolderId, filterDate, limit);
-      // Reset stats cache when navigating to a new folder
-      // But we can keep it if we want persistent cache, let's keep it for now.
       
   }, [currentFolderId, apiKey, filterDate, limit, refreshData]); 
 
@@ -245,8 +254,6 @@ const App: React.FC = () => {
     if (!apiKey) return;
 
     // Identify folders that are visible but don't have stats yet
-    // REMOVED .slice(0, 50) to allow full list processing
-    // Use Ref to check cache to avoid effect re-triggering when state updates
     const visibleFolders = filteredItems
         .filter(item => item.type === ItemType.FOLDER && statsCacheRef.current[item.id] === undefined);
 
@@ -282,12 +289,10 @@ const App: React.FC = () => {
                 return update;
             });
             
-            // Update Ref immediately for subsequent checks in this same loop context (if needed)
             results.forEach(res => {
                 statsCacheRef.current[res.id] = res.count;
             });
 
-            // Small delay to allow UI to breathe and prevent rapid-fire API errors
             await new Promise(r => setTimeout(r, 50));
         }
     };
@@ -295,7 +300,7 @@ const App: React.FC = () => {
     processBatches();
 
     return () => { isMounted = false; };
-  }, [filteredItems, apiKey]); // statsCache removed from dep array to avoid re-triggering loop
+  }, [filteredItems, apiKey]);
 
 
   // --- Handlers ---
@@ -304,10 +309,12 @@ const App: React.FC = () => {
     setItems(newItems);
   };
 
-  const handleConnectSave = (key: string) => {
-      setApiKey(key);
-      setFolderCache({}); 
-      setHistory([{ id: ROOT_ID, name: 'Kho Hồ Sơ Tổng' }]);
+  const handleConnectSave = (key: string, newFolderId: string) => {
+      if (key) setApiKey(key);
+      if (newFolderId && newFolderId !== rootFolderId) {
+          setRootFolderId(newFolderId);
+          // History reset is handled by useEffect on rootFolderId change
+      }
       setSearchQuery('');
       setError(null);
   };
@@ -340,12 +347,10 @@ const App: React.FC = () => {
 
   const handleSearchSubmit = (e: React.FormEvent) => {
       e.preventDefault();
-      // Client-side search only: Do nothing here, the UI updates via filteredItems
   };
 
   const handleClearSearch = () => {
       setSearchQuery(''); 
-      // No need to refresh data, just clear the filter
   };
 
   const handleRefreshClick = () => {
@@ -421,7 +426,7 @@ const App: React.FC = () => {
             
             <div className="flex flex-col">
               <h1 className="text-xl font-bold text-blue-900 tracking-tight leading-tight uppercase">PHÒNG KHÁM TAI MŨI HỌNG BUÔN HỒ</h1>
-              <a href={SHARED_DRIVE_LINK} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1 mt-0.5">
+              <a href={`https://drive.google.com/drive/folders/${rootFolderId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1 mt-0.5">
                 Kho dữ liệu Drive ↗
               </a>
             </div>
@@ -443,7 +448,7 @@ const App: React.FC = () => {
             </form>
             
             <button onClick={handleOpenConnectModal} className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors border text-sm ${apiKey ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`} title="Cấu hình API Key">
-                <span className="hidden sm:inline">{apiKey ? 'Đã kết nối' : 'Nhập API Key'}</span>
+                <span className="hidden sm:inline">{apiKey ? 'Đã kết nối' : 'Kết nối'}</span>
             </button>
           </div>
         </div>
@@ -573,7 +578,7 @@ const App: React.FC = () => {
                     <div className="mt-2 bg-white p-3 rounded-lg border border-red-100">
                         <p className="font-bold text-red-800 mb-1">Cách mở quyền truy cập:</p>
                         <ol className="list-decimal ml-5 space-y-1 text-gray-700">
-                            <li>Truy cập <a href={SHARED_DRIVE_LINK} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-800 font-semibold">Google Drive</a>.</li>
+                            <li>Truy cập <a href={`https://drive.google.com/drive/folders/${rootFolderId}`} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-800 font-semibold">Google Drive</a>.</li>
                             <li>Nhấn chuột phải vào thư mục $\rightarrow$ Chọn <strong>Chia sẻ (Share)</strong>.</li>
                             <li>Tại mục "Quyền truy cập chung" (General access), đổi từ "Hạn chế" sang <strong>"Bất kỳ ai có đường liên kết" (Anyone with the link)</strong>.</li>
                             <li>Nhấn <strong>Xong (Done)</strong> và tải lại trang này.</li>
@@ -582,7 +587,7 @@ const App: React.FC = () => {
                 )}
 
                 <div className="flex gap-3 mt-2">
-                    <button onClick={handleOpenConnectModal} className="bg-red-600 text-white px-4 py-2 rounded-lg self-start font-medium hover:bg-red-700 transition-colors shadow-sm">Cấu hình lại Key</button>
+                    <button onClick={handleOpenConnectModal} className="bg-red-600 text-white px-4 py-2 rounded-lg self-start font-medium hover:bg-red-700 transition-colors shadow-sm">Cấu hình lại</button>
                     <button onClick={handleRefreshClick} className="bg-white border border-red-300 text-red-700 px-4 py-2 rounded-lg self-start font-medium hover:bg-red-50 transition-colors shadow-sm">Thử lại</button>
                 </div>
              </div>
@@ -646,7 +651,12 @@ const App: React.FC = () => {
       </main>
 
       <SmartImportModal isOpen={isImportModalOpen} onClose={handleCloseImportModal} onImport={handleManualImport} />
-      <ConnectModal isOpen={isConnectModalOpen} onClose={handleCloseConnectModal} onSave={handleConnectSave} />
+      <ConnectModal 
+        isOpen={isConnectModalOpen} 
+        onClose={handleCloseConnectModal} 
+        onSave={handleConnectSave} 
+        initialFolderId={rootFolderId} 
+      />
       
       <FilePreviewModal 
         item={previewItem} 
