@@ -1,20 +1,38 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Hệ thống Tra cứu Hồ sơ Nội soi
 
-# Run and deploy your AI Studio app
+Dự án này là một ứng dụng Web App (React/Vite) giúp tra cứu và quản lý hồ sơ bệnh nhân từ Google Drive một cách trực quan, nhanh chóng.
 
-This contains everything you need to run your app locally.
+## Hướng dẫn cài đặt Logo (Quan trọng)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1HWupwy8iIN_M12PeVYQe-a0fnNt-R6G7
+Để thay đổi logo và giữ cho nó không bị mất mỗi khi cập nhật code, bạn **BẮT BUỘC** phải làm như sau trên máy tính:
 
-## Run Locally
+1.  Chuẩn bị file logo của bạn, đổi tên thành `logo.png`.
+2.  Copy file đó vào thư mục `public/` **trên máy tính của bạn**.
+3.  Sau đó mới thực hiện các lệnh git (`git add`, `git commit`, `git push`).
 
-**Prerequisites:**  Node.js
+**Lưu ý:** Nếu bạn chỉ upload logo trên trang web GitHub, lần sau bạn đẩy code từ máy tính lên, logo sẽ bị xóa mất do cơ chế đồng bộ của Git.
 
+## Cài đặt & Chạy thử
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1.  Cài đặt thư viện:
+    ```bash
+    npm install
+    ```
+
+2.  Chạy thử (Local):
+    ```bash
+    npm run dev
+    ```
+
+3.  Đóng gói (Build) để deploy:
+    ```bash
+    npm run build
+    ```
+
+## Cấu hình Biến môi trường (Trên Netlify)
+
+Để bảo mật và tiện lợi, hãy cấu hình các biến sau trên Netlify (Site settings > Environment variables):
+
+*   `VITE_GOOGLE_API_KEY`: API Key của Google Drive.
+*   `VITE_ROOT_FOLDER_ID`: ID thư mục gốc chứa hồ sơ.
+*   `VITE_ADMIN_PASSWORD`: Mật khẩu để vào trang cấu hình (Mặc định: admin123).
