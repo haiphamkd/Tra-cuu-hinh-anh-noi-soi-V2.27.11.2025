@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { SearchIcon, FolderIcon } from './components/Icons';
+import { SearchIcon, FolderIcon, ChartBarIcon } from './components/Icons';
 import { FolderCard } from './components/FolderCard';
 import { SmartImportModal } from './components/SmartImportModal';
 import { ConnectModal } from './components/ConnectModal';
 import { AdminAuthModal } from './components/AdminAuthModal';
+import { DashboardModal } from './components/DashboardModal';
 import { Breadcrumbs } from './components/Breadcrumbs';
 import { FilePreviewModal } from './components/FilePreviewModal';
-import { fetchDriveData, fetchFolderCount } from './services/apiService';
+import { fetchDriveData, fetchFolderCount, fetchRecentChanges } from './services/apiService';
 import { DirectoryItem, ApiResponse, ItemType } from './types';
 
 // --- HARDCODED CONFIGURATION ---
@@ -46,6 +47,9 @@ const App: React.FC = () => {
   const [statsCache, setStatsCache] = useState<Record<string, number>>({});
   // Ref to access latest cache inside effect without triggering re-runs
   const statsCacheRef = useRef<Record<string, number>>({});
+
+  // Timestamp of the last successful full fetch (for incremental updates)
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // Sync state to ref
   useEffect(() => {
@@ -91,6 +95,7 @@ const App: React.FC = () => {
   // Auth & Config Modals
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isAdminAuthOpen, setIsAdminAuthOpen] = useState(false);
+  const [isDashboardOpen, setIsDashboardOpen] = useState(false);
 
   const [previewItem, setPreviewItem] = useState<DirectoryItem | null>(null);
   
@@ -170,6 +175,11 @@ const App: React.FC = () => {
               const combined = isInitialLoad ? data.items : [...prev, ...data.items];
               return combined;
           });
+          
+          // Set last sync time to now (minus a small buffer to ensure overlap)
+          if (isInitialLoad) {
+              setLastSyncTime(new Date(Date.now() - 60000).toISOString());
+          }
 
           // Pagination logic with limit check
           if (data.nextPageToken) {
@@ -209,6 +219,49 @@ const App: React.FC = () => {
       }
   }, [isConnectModalOpen]);
 
+  // SMART REFRESH (Incremental Update)
+  const handleSmartRefresh = useCallback(async () => {
+    if (!apiKey || !currentFolderId || !lastSyncTime || isLoading || isFetchingMore) return;
+    
+    // Only smart refresh if not deep pagination
+    // And only if we are in the browsing view (no search query)
+    if (searchQuery) return;
+
+    try {
+        console.log("Checking for updates since", lastSyncTime);
+        const newItems = await fetchRecentChanges(apiKey, currentFolderId, lastSyncTime);
+        
+        if (newItems.length > 0) {
+            console.log(`Found ${newItems.length} updates`);
+            
+            // Merge logic
+            setItems(prevItems => {
+                const existingIds = new Set(prevItems.map(i => i.id));
+                const uniqueNewItems = newItems.filter(i => !existingIds.has(i.id));
+                
+                // If items were updated (already existed), we might want to update their details
+                // For simplicity, we just prepend new unique items here
+                // A more complex merge could update modifiedTime of existing ones
+                return [...uniqueNewItems, ...prevItems];
+            });
+            
+            // Invalidate cache for these items so we re-fetch folder counts if needed
+            setStatsCache(prev => {
+                const newCache = { ...prev };
+                newItems.forEach(item => {
+                    delete newCache[item.id];
+                });
+                return newCache;
+            });
+            
+            setLastSyncTime(new Date().toISOString());
+        }
+    } catch (e) {
+        console.warn("Smart refresh failed", e);
+    }
+  }, [apiKey, currentFolderId, lastSyncTime, isLoading, isFetchingMore, searchQuery]);
+
+
   // Trigger subsequent fetches if token exists
   useEffect(() => {
       // STOP Pagination if we reached the user-requested limit
@@ -235,6 +288,27 @@ const App: React.FC = () => {
   }, [currentFolderId, apiKey, filterDate, limit, refreshData]); 
 
 
+  // --- AUTO REFRESH TIMER ---
+  useEffect(() => {
+      // Load auto-refresh setting
+      const savedInterval = localStorage.getItem('drive-auto-refresh');
+      if (!savedInterval || savedInterval === 'off') return;
+      
+      const intervalMs = parseInt(savedInterval) * 60 * 1000;
+      if (isNaN(intervalMs) || intervalMs < 60000) return;
+
+      const timer = setInterval(() => {
+          // Don't refresh if modals open or user interacting
+          if (isConnectModalOpen || isImportModalOpen || previewItem || document.hidden) return;
+          
+          handleSmartRefresh();
+          
+      }, intervalMs);
+
+      return () => clearInterval(timer);
+  }, [isConnectModalOpen, isImportModalOpen, previewItem, handleSmartRefresh]);
+
+
   // --- LAZY LOAD FOLDER COUNTS (PARALLEL BATCHING) ---
   const filteredItems = useMemo(() => {
     let result = items;
@@ -255,6 +329,7 @@ const App: React.FC = () => {
     if (!apiKey) return;
 
     // Identify folders that are visible but don't have stats yet
+    // NO SLICE LIMIT: Scan all loaded folders
     const visibleFolders = filteredItems
         .filter(item => item.type === ItemType.FOLDER && statsCacheRef.current[item.id] === undefined);
 
@@ -264,6 +339,7 @@ const App: React.FC = () => {
 
     // BATCH PROCESSING
     const processBatches = async () => {
+        // High batch size for speed
         const BATCH_SIZE = 20; 
         
         for (let i = 0; i < visibleFolders.length; i += BATCH_SIZE) {
@@ -419,6 +495,10 @@ const App: React.FC = () => {
     }
   }, [hasPrev, filteredItems, currentPreviewIndex]);
 
+  // Check auto-refresh status for UI
+  const autoRefreshInterval = localStorage.getItem('drive-auto-refresh');
+  const isAutoRefreshOn = autoRefreshInterval && autoRefreshInterval !== 'off';
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       {/* Header */}
@@ -463,6 +543,15 @@ const App: React.FC = () => {
                   </div>
               </div>
             </form>
+
+            <button 
+                onClick={() => setIsDashboardOpen(true)}
+                className="flex items-center gap-2 px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 rounded-lg font-medium transition-colors text-sm"
+                title="Xem Báo Cáo"
+            >
+                <ChartBarIcon className="w-5 h-5" />
+                <span className="hidden sm:inline">Báo cáo</span>
+            </button>
             
             <button 
                 onClick={handleOpenConfig} 
@@ -522,6 +611,13 @@ const App: React.FC = () => {
                              <svg className="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M5.625 1.5H9a3.75 3.75 0 0 1 3.75 3.75v1.875c0 1.036.84 1.875 1.875 1.875H16.5a3.75 3.75 0 0 1 3.75 3.75v7.875c0 1.035-.84 1.875-1.875 1.875H5.625a1.875 1.875 0 0 1-1.875-1.875V3.375c0-1.036.84-1.875 1.875-1.875ZM12.75 12a.75.75 0 0 0-1.5 0v2.25H9a.75.75 0 0 0 0 1.5h2.25V18a.75.75 0 0 0 1.5 0v-2.25H15a.75.75 0 0 0 0-1.5h-2.25V12Z" clipRule="evenodd" /></svg>
                              {stats.files} tệp tin
                          </span>
+
+                         {isAutoRefreshOn && (
+                             <span className="ml-2 text-blue-500 bg-blue-50 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border border-blue-100" title="Tự động cập nhật đang bật">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                AUTO
+                             </span>
+                         )}
 
                         {isFetchingMore && (
                             <span className="ml-2 text-orange-500 bg-orange-50 px-2 py-0.5 rounded flex items-center gap-1">
@@ -685,6 +781,12 @@ const App: React.FC = () => {
         onSave={handleConnectSave} 
         initialFolderId={rootFolderId} 
         initialApiKey={apiKey}
+      />
+
+      <DashboardModal
+        isOpen={isDashboardOpen}
+        onClose={() => setIsDashboardOpen(false)}
+        items={itemsRef.current}
       />
       
       <FilePreviewModal 

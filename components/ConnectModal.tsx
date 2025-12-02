@@ -16,6 +16,9 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState('');
+  
+  // Auto Refresh State
+  const [autoRefresh, setAutoRefresh] = useState('off');
 
   // Load initial values
   useEffect(() => {
@@ -23,6 +26,8 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
         setFolderInput(initialFolderId);
         setApiKeyInput(initialApiKey);
         setExportStatus('');
+        // Load setting
+        setAutoRefresh(localStorage.getItem('drive-auto-refresh') || 'off');
     }
   }, [isOpen, initialFolderId, initialApiKey]);
 
@@ -37,6 +42,10 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
 
   const handleSave = () => {
     const cleanId = extractFolderId(folderInput.trim());
+    
+    // Save Auto Refresh Setting
+    localStorage.setItem('drive-auto-refresh', autoRefresh);
+    
     onSave(cleanId, apiKeyInput.trim());
     onClose();
   };
@@ -199,8 +208,31 @@ export const ConnectModal: React.FC<Props> = ({ isOpen, onClose, onSave, initial
                   Key cần được tạo trên Google Cloud Console và kích hoạt Drive API.
               </p>
           </div>
+          
+          {/* Section 3: Auto Refresh Settings */}
+          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
+              <label className="block text-sm font-bold text-gray-800 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  Tự động làm mới (Auto Refresh):
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3">
+                  <select 
+                      value={autoRefresh} 
+                      onChange={(e) => setAutoRefresh(e.target.value)}
+                      className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm outline-none"
+                  >
+                      <option value="off">Tắt (Thủ công)</option>
+                      <option value="1">Mỗi 1 phút</option>
+                      <option value="5">Mỗi 5 phút</option>
+                      <option value="15">Mỗi 15 phút</option>
+                  </select>
+              </div>
+              <p className="text-xs text-gray-500">
+                  <span className="font-bold text-orange-600">Lưu ý:</span> Cập nhật quá thường xuyên (1 phút) có thể làm cạn kiệt Quota miễn phí của Google Drive API. Khuyên dùng 5 hoặc 15 phút.
+              </p>
+          </div>
 
-          {/* Section 3: Export Data */}
+          {/* Section 4: Export Data */}
           <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
               <label className="block text-sm font-bold text-gray-800 flex items-center gap-2">
                   <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>

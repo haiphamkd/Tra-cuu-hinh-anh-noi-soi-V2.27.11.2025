@@ -1,5 +1,5 @@
 
-import { ApiResponse, ItemType } from "../types";
+import { ApiResponse, ItemType, DirectoryItem } from "../types";
 
 const GOOGLE_DRIVE_API_URL = "https://www.googleapis.com/drive/v3/files";
 
@@ -25,6 +25,59 @@ export const fetchFolderCount = async (apiKey: string, folderId: string): Promis
     }
 };
 
+// New function for Incremental Updates (Smart Refresh)
+export const fetchRecentChanges = async (
+    apiKey: string,
+    rootFolderId: string,
+    sinceTime: string
+): Promise<DirectoryItem[]> => {
+    try {
+        const url = new URL(GOOGLE_DRIVE_API_URL);
+        
+        // Query: Only items modified AFTER the last check
+        let q = `modifiedTime > '${sinceTime}' and trashed = false`;
+        
+        if (rootFolderId) {
+            q += ` and '${rootFolderId}' in parents`;
+        }
+
+        url.searchParams.append("q", q);
+        url.searchParams.append("key", apiKey);
+        url.searchParams.append("supportsAllDrives", "true");
+        url.searchParams.append("includeItemsFromAllDrives", "true");
+        // Added createdTime to fields
+        url.searchParams.append("fields", "files(id, name, mimeType, size, modifiedTime, createdTime, webViewLink, iconLink, thumbnailLink)");
+        url.searchParams.append("pageSize", "100"); 
+        url.searchParams.append("orderBy", "modifiedTime desc");
+
+        const response = await fetch(url.toString());
+        if (!response.ok) return [];
+
+        const data = await response.json();
+        
+        if (!data.files || data.files.length === 0) return [];
+
+        return data.files.map((file: any) => {
+            const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+            return {
+                id: file.id,
+                name: file.name,
+                url: file.webViewLink,
+                type: isFolder ? ItemType.FOLDER : ItemType.FILE,
+                description: "",
+                tags: isFolder ? ['Thư mục'] : ['Tệp tin'],
+                dateAdded: file.modifiedTime,
+                createdTime: file.createdTime, // Map createdTime
+                mimeType: file.mimeType,
+                size: file.size ? parseInt(file.size) : undefined,
+            };
+        });
+    } catch (error) {
+        console.error("Smart Refresh Error:", error);
+        return [];
+    }
+};
+
 export const fetchDriveData = async (
     apiKey: string, 
     folderId: string = "1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk", // Default Root ID
@@ -43,24 +96,20 @@ export const fetchDriveData = async (
   try {
     const url = new URL(GOOGLE_DRIVE_API_URL);
     
-    // 1. Construct the 'q' parameter (Query Clause)
+    // 1. Construct the 'q' parameter
     let qClauses: string[] = ["trashed = false"];
 
     // -- Search vs Browse Logic --
     const isSearching = searchQuery && searchQuery.trim() !== "";
     
     if (isSearching) {
-        // User is searching
         const safeQuery = searchQuery!.replace(/'/g, "\\'");
         qClauses.push(`name contains '${safeQuery}'`);
         
-        // If scope is current folder only
         if (scope === 'current' && folderId) {
             qClauses.push(`'${folderId}' in parents`);
         }
     } else {
-        // User is browsing (Strict Hierarchy)
-        // This ensures we ONLY see direct children of the folderId
         if (folderId) {
             qClauses.push(`'${folderId}' in parents`);
         }
@@ -69,8 +118,6 @@ export const fetchDriveData = async (
     // -- Time Filter --
     if (days && days !== 'all') {
         let isoDate = days.toString();
-        // Check if days is already an ISO string (contains 'T')
-        // If it's just a number, calculate the date (fallback)
         if (!isoDate.includes('T') && !isNaN(Number(days))) {
             const date = new Date();
             date.setDate(date.getDate() - Number(days));
@@ -84,29 +131,22 @@ export const fetchDriveData = async (
     // 2. Other Parameters
     url.searchParams.append("key", apiKey);
     
-    // CRITICAL: Enable support for Team Drives / Shared Drives
     url.searchParams.append("supportsAllDrives", "true");
     url.searchParams.append("includeItemsFromAllDrives", "true");
 
-    // FIX: Only use corpora=allDrives when searching globally (not restricted by parent)
-    // Using corpora=allDrives with 'in parents' query causes 400 Bad Request
-    // Only apply 'allDrives' if we are searching AND scope is global
     if (isSearching && scope === 'global') {
         url.searchParams.append("corpora", "allDrives");
     }
 
-    // Fields: request only what we need to save bandwidth
-    url.searchParams.append("fields", "nextPageToken, files(id, name, mimeType, size, modifiedTime, webViewLink, iconLink, thumbnailLink)");
+    // Added createdTime to fields
+    url.searchParams.append("fields", "nextPageToken, files(id, name, mimeType, size, modifiedTime, createdTime, webViewLink, iconLink, thumbnailLink)");
     
-    // FIX: Google Drive API limits pageSize to 1000. 
-    // If user requests 3000, we request 1000 per page and let the App handle pagination loops.
     const maxPageSize = 1000;
     const requestedLimit = limit === 'all' ? maxPageSize : Number(limit);
-    // Use the smaller of requested limit or max API limit (1000)
     const actualPageSize = Math.min(requestedLimit, maxPageSize);
     
     url.searchParams.append("pageSize", actualPageSize.toString());
-    url.searchParams.append("orderBy", "folder, modifiedTime desc"); // Folders first, then newest files
+    url.searchParams.append("orderBy", "folder, modifiedTime desc"); 
     
     if (pageToken) {
         url.searchParams.append("pageToken", pageToken);
@@ -129,7 +169,6 @@ export const fetchDriveData = async (
             errJson = JSON.parse(errText);
         } catch (e) { /* ignore */ }
 
-        // Log full error for debugging (Stringify to avoid [object Object])
         console.error("Drive API Error Detail:", JSON.stringify(errJson || errText, null, 2));
 
         if (response.status === 403) {
@@ -149,7 +188,6 @@ export const fetchDriveData = async (
                  errMsg = `Lỗi 403: ${message || "Quyền truy cập bị từ chối."}`;
              }
         } else if (response.status === 400) {
-             // Handle Invalid Value (often pageToken issues or query syntax)
              if (errText.includes("pageToken") || errJson?.error?.errors?.[0]?.location === 'pageToken') {
                  errMsg = "Lỗi Token phân trang (Hệ thống sẽ tự làm mới...).";
              } else {
@@ -173,12 +211,13 @@ export const fetchDriveData = async (
             name: file.name,
             url: file.webViewLink,
             type: isFolder ? ItemType.FOLDER : ItemType.FILE,
-            description: "", // Drive API listing doesn't return description by default efficiently
+            description: "", 
             tags: isFolder ? ['Thư mục'] : ['Tệp tin'],
-            dateAdded: file.modifiedTime,
+            dateAdded: file.modifiedTime, // Last Modified
+            createdTime: file.createdTime, // Created Time (New)
             mimeType: file.mimeType,
             size: file.size ? parseInt(file.size) : undefined,
-            folderCount: undefined, // API doesn't provide this cheaply
+            folderCount: undefined,
             fileCount: undefined
         };
     });

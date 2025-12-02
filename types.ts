@@ -12,11 +12,12 @@ export interface DirectoryItem {
   type: ItemType;
   description?: string;
   tags: string[];
-  dateAdded: string;
-  mimeType?: string; // New field for identifying content type (image, video, pdf)
-  folderCount?: number; // Count of sub-folders
-  fileCount?: number;   // Count of files
-  size?: number;        // Size in bytes for files
+  dateAdded: string; // This is modifiedTime
+  createdTime?: string; // New field for creation time
+  mimeType?: string; 
+  folderCount?: number; 
+  fileCount?: number;   
+  size?: number;        
 }
 
 export interface ApiResponse {
