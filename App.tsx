@@ -79,8 +79,8 @@ const App: React.FC = () => {
   // Stable filter date state to ensure pageToken remains valid during pagination
   const [filterDate, setFilterDate] = useState<string>(() => calculateDate('14'));
 
-  // Default Limit set to 2000 as requested
-  const [limit, setLimit] = useState<LimitOption>(2000); 
+  // Default Limit set to 1000 as requested
+  const [limit, setLimit] = useState<LimitOption>(1000); 
   
   // Pagination State
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);

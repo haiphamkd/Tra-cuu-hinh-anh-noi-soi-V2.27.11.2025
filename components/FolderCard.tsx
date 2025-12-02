@@ -45,11 +45,18 @@ export const FolderCard: React.FC<Props> = ({ item, onNavigate, onPreview, folde
       return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  // Helper to format date
+  // Helper to format date with time
   const formatDate = (dateString: string) => {
       try {
           const date = new Date(dateString);
-          return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+          return new Intl.DateTimeFormat('vi-VN', { 
+              day: '2-digit', 
+              month: '2-digit', 
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+          }).format(date);
       } catch (e) {
           return '';
       }
@@ -137,7 +144,7 @@ export const FolderCard: React.FC<Props> = ({ item, onNavigate, onPreview, folde
                 {isFolder ? (
                    <div className="flex items-center gap-2 text-[11px] text-gray-400 font-medium">
                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                       {formatDate(item.dateAdded)}
+                       Cập nhật: {formatDate(item.dateAdded)}
                    </div>
                 ) : (
                     <div className="flex items-center gap-2 text-[11px] text-gray-400 font-medium">
