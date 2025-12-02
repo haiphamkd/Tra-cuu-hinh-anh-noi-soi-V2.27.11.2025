@@ -1,19 +1,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DirectoryItem, ItemType } from "../types";
 
-// Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 // Updated ID from user request
 const PARENT_FOLDER_ID = "1Ja7GDH5PZMabdkGXhmfTg_hbG1mSzpWk";
 
-export const parseRawTextToItems = async (rawText: string): Promise<DirectoryItem[]> => {
-  if (!process.env.API_KEY) {
+export const parseRawTextToItems = async (apiKey: string, rawText: string): Promise<DirectoryItem[]> => {
+  if (!apiKey) {
     console.warn("No API Key provided. Returning empty list.");
     return [];
   }
 
   try {
+    // Initialize Gemini with the provided key dynamically
+    const ai = new GoogleGenAI({ apiKey });
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `You are a data extraction assistant for a Vietnamese user. 
@@ -70,10 +70,11 @@ export const parseRawTextToItems = async (rawText: string): Promise<DirectoryIte
   }
 };
 
-export const generateSearchTags = async (query: string): Promise<string[]> => {
-     if (!process.env.API_KEY) return [];
+export const generateSearchTags = async (apiKey: string, query: string): Promise<string[]> => {
+     if (!apiKey) return [];
      
      try {
+        const ai = new GoogleGenAI({ apiKey });
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: `Generate 5 related search keywords in Vietnamese for the user query: "${query}". Return only a JSON array of strings.`,

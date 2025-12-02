@@ -7,9 +7,10 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   onImport: (items: DirectoryItem[]) => void;
+  apiKey: string; // Add API Key prop
 }
 
-export const SmartImportModal: React.FC<Props> = ({ isOpen, onClose, onImport }) => {
+export const SmartImportModal: React.FC<Props> = ({ isOpen, onClose, onImport, apiKey }) => {
   const [text, setText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -17,8 +18,14 @@ export const SmartImportModal: React.FC<Props> = ({ isOpen, onClose, onImport })
 
   const handleProcess = async () => {
     if (!text.trim()) return;
+    if (!apiKey) {
+        alert("Vui lòng cấu hình API Key trước khi sử dụng tính năng này.");
+        return;
+    }
+
     setIsLoading(true);
-    const items = await parseRawTextToItems(text);
+    // Pass apiKey to service
+    const items = await parseRawTextToItems(apiKey, text);
     onImport(items);
     setIsLoading(false);
     setText('');
@@ -44,6 +51,13 @@ export const SmartImportModal: React.FC<Props> = ({ isOpen, onClose, onImport })
         </div>
         
         <div className="p-6 flex-1 overflow-y-auto">
+          {!apiKey && (
+              <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm border border-red-100 flex items-center gap-2">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                  Chưa có API Key. Tính năng AI sẽ không hoạt động.
+              </div>
+          )}
+
           <div className="mb-4 p-4 bg-blue-50 rounded-xl text-sm text-blue-800 border border-blue-100">
             <strong>Hướng dẫn:</strong>
             <ol className="list-decimal ml-4 mt-1 space-y-1 text-blue-700">
@@ -74,9 +88,9 @@ export const SmartImportModal: React.FC<Props> = ({ isOpen, onClose, onImport })
           </button>
           <button
             onClick={handleProcess}
-            disabled={isLoading || !text.trim()}
+            disabled={isLoading || !text.trim() || !apiKey}
             className={`px-6 py-2.5 bg-blue-600 text-white font-medium rounded-lg shadow-sm transition-all flex items-center gap-2
-              ${isLoading || !text.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0'}
+              ${isLoading || !text.trim() || !apiKey ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0'}
             `}
           >
             {isLoading ? (

@@ -767,7 +767,7 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <SmartImportModal isOpen={isImportModalOpen} onClose={handleCloseImportModal} onImport={handleManualImport} />
+      <SmartImportModal isOpen={isImportModalOpen} onClose={handleCloseImportModal} onImport={handleManualImport} apiKey={apiKey} />
       
       <AdminAuthModal 
         isOpen={isAdminAuthOpen}
